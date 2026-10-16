@@ -567,7 +567,6 @@ static int _sde_encoder_phys_cmd_handle_framedone_timeout(
 
 	cmd_enc->frame_tx_timeout_report_cnt++;
 	pending_kickoff_cnt = atomic_read(&phys_enc->pending_kickoff_cnt) + 1;
-
 	SDE_EVT32(DRMID(phys_enc->parent), phys_enc->hw_pp->idx - PINGPONG_0,
 			cmd_enc->frame_tx_timeout_report_cnt,
 			pending_kickoff_cnt,

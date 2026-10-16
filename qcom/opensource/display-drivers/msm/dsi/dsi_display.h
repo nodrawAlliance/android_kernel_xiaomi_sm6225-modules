@@ -713,9 +713,13 @@ int dsi_display_cmd_transfer(struct drm_connector *connector,
  * @recv_buf:           Receive buffer
  * @recv_buf_len:       Receive buffer length in bytes
  */
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 16, 0))
+int dsi_display_cmd_receive(void *display, const char *cmd_buf,
+			    u32 cmd_buf_len, u8 *recv_buf, u32 recv_buf_len, ktime_t *ts);
+#else
 int dsi_display_cmd_receive(void *display, const char *cmd_buf,
 			    u32 cmd_buf_len, u8 *recv_buf, u32 recv_buf_len);
-
+#endif
 /**
  * dsi_display_soft_reset() - perform a soft reset on DSI controller
  * @display:         Handle to display
@@ -870,4 +874,9 @@ int dsi_display_ctrl_vreg_on(struct dsi_display *display);
  */
 int dsi_display_ctrl_vreg_off(struct dsi_display *display);
 
+#ifdef MI_DISPLAY_MODIFY
+char *mi_dsi_display_get_cmdline_panel_info(struct dsi_display *display);
+int dsi_display_cmd_rx(struct dsi_display *display, struct dsi_cmd_desc *cmd);
+int dsi_display_ctrl_get_host_init_state(struct dsi_display *dsi_display, bool *state);
+#endif
 #endif /* _DSI_DISPLAY_H_ */

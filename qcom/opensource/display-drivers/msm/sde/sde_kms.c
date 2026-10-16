@@ -54,6 +54,9 @@
 #include "sde_reg_dma.h"
 #include "sde_connector.h"
 #include "sde_vm.h"
+#ifdef MI_DISPLAY_MODIFY
+#include "mi_disp_print.h"
+#endif
 #include "sde_fence.h"
 
 #include <linux/qcom_scm.h>
@@ -66,6 +69,11 @@
 
 #define CREATE_TRACE_POINTS
 #include "sde_trace.h"
+
+#ifdef MI_DISPLAY_MODIFY
+#include "mi_dsi_display.h"
+#include "mi_kernel_timer.h"
+#endif
 
 /* defines for secure channel call */
 #define MEM_PROTECT_SD_CTRL_SWITCH 0x18
@@ -764,6 +772,18 @@ static int _sde_kms_release_shared_buffer(unsigned int mem_addr,
 	}
 
 	/* leave ramdump memory only if base address matches */
+#ifdef MI_DISPLAY_MODIFY
+	if (mi_dsi_display_ramdump_support()) {
+#endif
+		/* leave ramdump memory only if base address matches */
+		if (ramdump_base == mem_addr &&
+				ramdump_buffer_size <= splash_buffer_size) {
+			mem_addr +=  ramdump_buffer_size;
+			splash_buffer_size -= ramdump_buffer_size;
+		}
+#ifdef MI_DISPLAY_MODIFY
+	}
+#endif
 	if (ramdump_base == mem_addr &&
 			ramdump_buffer_size <= splash_buffer_size) {
 		mem_addr +=  ramdump_buffer_size;
@@ -993,6 +1013,13 @@ static void _sde_kms_drm_check_dpms(struct drm_atomic_state *old_state,
 	struct sde_connector *c_conn;
 	int i, old_mode, new_mode, old_fps, new_fps;
 	enum panel_event_notifier_tag panel_type;
+#ifdef MI_DISPLAY_MODIFY
+	int notif_type;
+	struct mi_mode_info old_mode_info = {0};
+	struct mi_mode_info new_mode_info = {0};
+	ktime_t start_ktime;
+	s64 elapsed_us;
+#endif
 
 	for_each_old_connector_in_state(old_state, connector,
 			old_conn_state, i) {
@@ -1003,7 +1030,9 @@ static void _sde_kms_drm_check_dpms(struct drm_atomic_state *old_state,
 
 		new_fps = drm_mode_vrefresh(&crtc->state->mode);
 		new_mode = _sde_kms_get_blank(crtc->state, connector->state);
-
+#ifdef MI_DISPLAY_MODIFY
+		mi_sde_connector_state_get_mi_mode_info(connector->state, &new_mode_info);
+#endif
 		if (old_conn_state->crtc) {
 			old_crtc_state = drm_atomic_get_existing_crtc_state(
 					old_state, old_conn_state->crtc);
@@ -1011,12 +1040,19 @@ static void _sde_kms_drm_check_dpms(struct drm_atomic_state *old_state,
 			old_fps = drm_mode_vrefresh(&old_crtc_state->mode);
 			old_mode = _sde_kms_get_blank(old_crtc_state,
 							old_conn_state);
+#ifdef MI_DISPLAY_MODIFY
+			mi_sde_connector_state_get_mi_mode_info(old_conn_state, &old_mode_info);
+#endif
 		} else {
 			old_fps = 0;
 			old_mode = DRM_PANEL_EVENT_BLANK;
 		}
 
+#ifdef MI_DISPLAY_MODIFY
+		if ((old_mode != new_mode) || ((old_fps != new_fps) && (old_fps != 0))) {
+#else
 		if ((old_mode != new_mode) || (old_fps != new_fps)) {
+#endif
 			c_conn = to_sde_connector(connector);
 			SDE_EVT32(old_mode, new_mode, old_fps, new_fps,
 				c_conn->panel, crtc->state->active,
@@ -1028,10 +1064,30 @@ static void _sde_kms_drm_check_dpms(struct drm_atomic_state *old_state,
 			 * at the same time, give preference to power mode
 			 * changes rather than fps change.
 			 */
+#ifdef MI_DISPLAY_MODIFY
+			if (old_mode != new_mode && c_conn->panel) {
+				if (!crtc->state->mode.hskew) {
+					mi_kernel_timer_change_fps(new_fps, crtc, Mode_change, new_mode);
+				} else {
+					mi_kernel_timer_change_fps(new_mode_info.sf_refresh_rate, crtc, Mode_change, new_mode);
+				}
+			} else if (old_fps != new_fps && c_conn->panel) {
+				if (!crtc->state->mode.hskew) {
+					mi_kernel_timer_change_fps(new_fps, crtc, Fps_change, new_mode);
+				} else {
+					mi_kernel_timer_change_fps(new_mode_info.sf_refresh_rate, crtc, Fps_change,new_mode);
+
+				}
+			}
 
 			if ((old_mode == new_mode) && (old_fps != new_fps))
+notif_type = DRM_PANEL_EVENT_FPS_CHANGE;
+			else
+				notif_type = new_mode;
+#else
+			if ((old_mode == new_mode) && (old_fps != new_fps))
 				new_mode = DRM_PANEL_EVENT_FPS_CHANGE;
-
+#endif
 			if (!c_conn->panel)
 				continue;
 
@@ -1039,14 +1095,41 @@ static void _sde_kms_drm_check_dpms(struct drm_atomic_state *old_state,
 				connector->encoder) ?
 				PANEL_EVENT_NOTIFICATION_PRIMARY :
 				PANEL_EVENT_NOTIFICATION_SECONDARY;
-
+#ifdef MI_DISPLAY_MODIFY
+			notification.notif_type = notif_type;
+#else
 			notification.notif_type = new_mode;
+#endif
 			notification.panel = c_conn->panel;
 			notification.notif_data.old_fps = old_fps;
 			notification.notif_data.new_fps = new_fps;
 			notification.notif_data.early_trigger = is_pre_commit;
+#ifdef MI_DISPLAY_MODIFY
+			start_ktime = ktime_get();
+			SDE_ATRACE_BEGIN("panel_event_notification_trigger");
+#endif
 			panel_event_notification_trigger(panel_type,
 					&notification);
+#ifdef MI_DISPLAY_MODIFY
+			SDE_ATRACE_END("panel_event_notification_trigger");
+			elapsed_us = ktime_us_delta(ktime_get(), start_ktime);
+			if (is_pre_commit || elapsed_us > 1000) {
+				if (old_mode_info.ddic_mode == DDIC_MODE_NORMAL &&
+					new_mode_info.ddic_mode == DDIC_MODE_NORMAL) {
+					DISP_TIME_INFO("%s early_trigger:%d (power mode %d->%d, fps %d->%d) - %d.%d(ms)\n",
+						c_conn->name, is_pre_commit, old_mode, new_mode,
+						old_fps, new_fps, (int)(elapsed_us / 1000), (int)(elapsed_us % 1000));
+				} else {
+					DISP_TIME_INFO("%s early_trigger:%d (power mode %d->%d, fps %d@%s@%d:%d->%d@%s@%d:%d) - %d.%d(ms)\n",
+						c_conn->name, is_pre_commit, old_mode, new_mode,
+						old_fps, get_ddic_mode_name(old_mode_info.ddic_mode),
+						old_mode_info.sf_refresh_rate, old_mode_info.ddic_min_refresh_rate,
+						new_fps, get_ddic_mode_name(new_mode_info.ddic_mode),
+						new_mode_info.sf_refresh_rate, new_mode_info.ddic_min_refresh_rate,
+						(int)(elapsed_us / 1000), (int)(elapsed_us % 1000));
+				}
+			}
+#endif
 		}
 	}
 
@@ -1619,7 +1702,9 @@ static void sde_kms_wait_for_commit_done(struct msm_kms *kms,
 		SDE_ERROR("power resource is not enabled\n");
 		return;
 	}
-
+#ifdef	MI_DISPLAY_MODIFY
+	mi_kernel_recoder_function_start_by_crtc(crtc, Wait_for_commit_done);
+#endif
 	SDE_ATRACE_BEGIN("sde_kms_wait_for_commit_done");
 	list_for_each_entry(encoder, &dev->mode_config.encoder_list, head) {
 		cwb_disabling = false;
@@ -1658,6 +1743,9 @@ static void sde_kms_wait_for_commit_done(struct msm_kms *kms,
 		sde_crtc_static_cache_read_kickoff(crtc);
 
 	SDE_ATRACE_END("sde_kms_wait_for_commit_done");
+#ifdef	MI_DISPLAY_MODIFY
+	mi_kernel_recoder_function_end_by_crtc(crtc, Wait_for_commit_done);
+#endif
 }
 
 static void sde_kms_prepare_fence(struct msm_kms *kms,
@@ -1928,7 +2016,7 @@ static int _sde_kms_setup_displays(struct drm_device *dev,
 				display,
 				&wb_ops,
 				DRM_CONNECTOR_POLL_HPD,
-				DRM_MODE_CONNECTOR_VIRTUAL);
+				DRM_MODE_CONNECTOR_VIRTUAL, false);
 		if (connector) {
 			priv->encoders[priv->num_encoders++] = encoder;
 			priv->connectors[priv->num_connectors++] = connector;
@@ -1971,7 +2059,7 @@ static int _sde_kms_setup_displays(struct drm_device *dev,
 					display,
 					&dsi_ops,
 					DRM_CONNECTOR_POLL_HPD,
-					DRM_MODE_CONNECTOR_DSI);
+					DRM_MODE_CONNECTOR_DSI, false);
 		if (connector) {
 			priv->encoders[priv->num_encoders++] = encoder;
 			priv->connectors[priv->num_connectors++] = connector;
@@ -2047,7 +2135,7 @@ static int _sde_kms_setup_displays(struct drm_device *dev,
 					display,
 					&dp_ops,
 					DRM_CONNECTOR_POLL_HPD,
-					DRM_MODE_CONNECTOR_DisplayPort);
+					DRM_MODE_CONNECTOR_DisplayPort, false);
 		if (connector) {
 			priv->encoders[priv->num_encoders++] = encoder;
 			priv->connectors[priv->num_connectors++] = connector;
@@ -2219,6 +2307,9 @@ static int _sde_kms_drm_obj_init(struct sde_kms *sde_kms)
 	/* All CRTCs are compatible with all encoders */
 	for (i = 0; i < priv->num_encoders; i++)
 		priv->encoders[i]->possible_crtcs = (1 << priv->num_crtcs) - 1;
+#ifdef	MI_DISPLAY_MODIFY
+	mi_kernel_recoder_init(max_crtc_count, priv);
+#endif
 
 	return 0;
 fail:
@@ -2408,6 +2499,9 @@ static void _sde_kms_hw_destroy(struct sde_kms *sde_kms,
 
 	sde_reg_dma_deinit();
 	_sde_kms_mmu_destroy(sde_kms);
+#ifdef	MI_DISPLAY_MODIFY
+	mi_kernel_recoder_destroy();
+#endif
 }
 
 int sde_kms_mmu_detach(struct sde_kms *sde_kms, bool secure_only)
@@ -3923,42 +4017,41 @@ static int _sde_kms_pm_deepsleep_helper(struct sde_kms *sde_kms, bool enter)
 	void *display;
 	struct dsi_display *dsi_display;
 
-	if (!pm_suspend_via_firmware())
+	if (!pm_suspend_via_firmware() && !sde_kms->hibernate_phase)
 		return 0;
-	else {
 
-		/*Applicable for both deepsleep and hibernation*/
-		SDE_INFO("Deepsleep : enter %d\n", enter);
+	/*Applicable for both deepsleep and hibernation*/
+	SDE_INFO("Sleepstate(%d)\n", enter);
 
-		for (i = 0; i < sde_kms->dsi_display_count; i++) {
-			display = sde_kms->dsi_displays[i];
-			dsi_display = (struct dsi_display *)display;
+	for (i = 0; i < sde_kms->dsi_display_count; i++) {
+		display = sde_kms->dsi_displays[i];
+		dsi_display = (struct dsi_display *)display;
 
-			if (enter) {
+		if (enter) {
 
-				/* During deepsleep/hibernation, clk_parent are
-				 * reset at HW but sw caching is retained in clk
-				 * framework. To maintain same state. unset parents
-				 * and restore during exit.
-				 */
+			/* During deepsleep/hibernation, clk_parent are
+			 * reset at HW but sw caching is retained in clk
+			 * framework. To maintain same state. unset parents
+			 * and restore during exit.
+			 */
 
-				if(dsi_display->needs_clk_src_reset)
-					rc = dsi_display_set_clk_src(dsi_display, true);
+			if (dsi_display->needs_clk_src_reset)
+				rc = dsi_display_set_clk_src(dsi_display, true);
 
-				/* DSI ctrl regulator can be disabled, even in static
-				 * screen, during deepsleep.
-				 */
-				if (dsi_display->needs_ctrl_vreg_disable)
-					(void)dsi_display_ctrl_vreg_off(dsi_display);
-			} else {
-				if (dsi_display->needs_ctrl_vreg_disable)
-					(void)dsi_display_ctrl_vreg_on(dsi_display);
+			/* DSI ctrl regulator can be disabled, even in static
+			 * screen, during deepsleep.
+			 */
+			if (dsi_display->needs_ctrl_vreg_disable)
+				(void)dsi_display_ctrl_vreg_off(dsi_display);
+		} else {
+			if (dsi_display->needs_ctrl_vreg_disable)
+				(void)dsi_display_ctrl_vreg_on(dsi_display);
 
-				if (dsi_display->needs_clk_src_reset)
-					(void)dsi_display_set_clk_src(dsi_display, false);
-			}
+			if (dsi_display->needs_clk_src_reset)
+				(void)dsi_display_set_clk_src(dsi_display, false);
 		}
 	}
+
 	return rc;
 }
 #else

@@ -15,6 +15,7 @@ def define_monaco():
             "CONFIG_DRM_MSM_REGISTER_LOGGING",
             "CONFIG_QCOM_MDSS_PLL",
             "CONFIG_THERMAL_OF",
+	    "MULTI_TIMING_MODIFY",
         ],
 #-------To add deps in other target-----------
 #       deps = [

@@ -254,6 +254,7 @@ static int _set_dspp_pcc_feature(struct sde_hw_dspp *hw_dspp,
 		ret = -EINVAL;
 	else
 		hw_dspp->ops.setup_pcc(hw_dspp, hw_cfg);
+
 	return ret;
 }
 

@@ -32,6 +32,11 @@ KBUILD_OPTIONS += MODNAME=msm_drm
 KBUILD_OPTIONS += BOARD_PLATFORM=$(TARGET_BOARD_PLATFORM)
 KBUILD_OPTIONS += $(DISPLAY_SELECT)
 
+###########################################################
+# Add rely to use the functions of virtual proximity
+LCT_TP_SYMBOLS := $(DISPLAY_BLD_DIR)/../touch-drivers/Module.symvers
+KBUILD_OPTIONS += KBUILD_EXTRA_SYMBOLS="$(LCT_TP_SYMBOLS)"
+
 ifneq ($(TARGET_BOARD_AUTO), true)
 $(info Build the symbols respective to the platform)
 ifneq ($(call is-board-platform-in-list, $(NO_MMRM_BOARDS)),true)

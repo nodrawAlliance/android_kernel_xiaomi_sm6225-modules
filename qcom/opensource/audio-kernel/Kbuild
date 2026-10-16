@@ -5,3 +5,4 @@ obj-y += asoc/codecs/sipa/
 obj-y += asoc/codecs/lct_audio_info/
 obj-y += asoc/codecs/fs15xxx/
 obj-y += asoc/codecs/fs1815/
+obj-y += asoc/codecs/aw87xxx/

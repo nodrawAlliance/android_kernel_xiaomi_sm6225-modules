@@ -74,6 +74,11 @@ AUDIO_KERNEL_MODULES += $(KERNEL_MODULES_OUT)/q6_notifier_dlkm.ko\
 	$(KERNEL_MODULES_OUT)/va_macro_dlkm.ko \
 	$(KERNEL_MODULES_OUT)/tx_macro_dlkm.ko \
 	$(KERNEL_MODULES_OUT)/rx_macro_dlkm.ko \
+	$(KERNEL_MODULES_OUT)/sipa_dlkm.ko \
+	$(KERNEL_MODULES_OUT)/sipa_tuning_dlkm.ko \
+	$(KERNEL_MODULES_OUT)/fs15xxx_drv_dlkm.ko \
+	$(KERNEL_MODULES_OUT)/fs15xxx_amp_dlkm.ko \
+	$(KERNEL_MODULES_OUT)/lct_audio_info_dlkm.ko \
 	$(KERNEL_MODULES_OUT)/wsa881x_analog_dlkm.ko \
 	$(KERNEL_MODULES_OUT)/wcd937x_dlkm.ko \
 	$(KERNEL_MODULES_OUT)/wcd937x_slave_dlkm.ko

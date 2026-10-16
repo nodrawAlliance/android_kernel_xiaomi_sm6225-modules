@@ -39,6 +39,18 @@ static const unsigned int mbhc_ext_dev_supported_table[] = {
 struct mutex hphl_pa_lock;
 struct mutex hphr_pa_lock;
 
+//ADD:touch headphone status
+#define LCT_TP_EARPHONE_PLUGIN  1
+#if LCT_TP_EARPHONE_PLUGIN
+typedef struct touchscreen_earphone_plugin_data {
+	bool valid;
+	bool earphone_plugged_in;
+	void (*event_callback)(void);
+} touchscreen_earphone_plugin_data_t;
+extern touchscreen_earphone_plugin_data_t g_touchscreen_earphone_pulgin;
+#endif
+//END:touch headphone status
+
 void wcd_mbhc_jack_report(struct wcd_mbhc *mbhc,
 			  struct snd_soc_jack *jack, int status, int mask)
 {
@@ -566,6 +578,12 @@ void wcd_mbhc_hs_elec_irq(struct wcd_mbhc *mbhc, int irq_type,
 }
 EXPORT_SYMBOL(wcd_mbhc_hs_elec_irq);
 
+//ADD: Audio_UsbHeadsetDirection
+#if IS_ENABLED(CONFIG_QCOM_FSA4480_I2C)
+extern int fsa4480_flip_event(int *fsa4480_usbhs_state);
+#endif
+//END Audio_UsbHeadsetDirection
+
 void wcd_mbhc_report_plug(struct wcd_mbhc *mbhc, int insertion,
 				enum snd_jack_types jack_type)
 {
@@ -573,6 +591,12 @@ void wcd_mbhc_report_plug(struct wcd_mbhc *mbhc, int insertion,
 	bool is_pa_on = false;
 	u8 fsm_en = 0;
 	int extdev_type = 0;
+//ADD: Audio_UsbHeadsetDirection
+#if IS_ENABLED(CONFIG_QCOM_FSA4480_I2C)
+	int rc = 0;
+	int wcd_fsa4480_usbhs_state = 0;
+#endif
+//END Audio_UsbHeadsetDirection
 
 	WCD_MBHC_RSC_ASSERT_LOCKED(mbhc);
 
@@ -614,8 +638,17 @@ void wcd_mbhc_report_plug(struct wcd_mbhc *mbhc, int insertion,
 
 		mbhc->hph_type = WCD_MBHC_HPH_NONE;
 		mbhc->zl = mbhc->zr = 0;
+		mbhc->mbhc_cfg->usbhs_status_value = 0; /*ADD: Audio_UsbHeadsetDirection*/
 		pr_debug("%s: Reporting removal %d(%x)\n", __func__,
 			 jack_type, mbhc->hph_status);
+		//ADD: touch headphone status
+#if LCT_TP_EARPHONE_PLUGIN
+		g_touchscreen_earphone_pulgin.earphone_plugged_in = false;
+		if(g_touchscreen_earphone_pulgin.valid) {
+			g_touchscreen_earphone_pulgin.event_callback();
+		}
+#endif
+		//END: touch headphone status
 		wcd_mbhc_jack_report(mbhc, &mbhc->headset_jack,
 				mbhc->hph_status, WCD_MBHC_JACK_MASK);
 		wcd_mbhc_set_and_turnoff_hph_padac(mbhc);
@@ -786,8 +819,25 @@ void wcd_mbhc_report_plug(struct wcd_mbhc *mbhc, int insertion,
 		    mbhc->mbhc_cb->mbhc_micb_ramp_control)
 			mbhc->mbhc_cb->mbhc_micb_ramp_control(component, false);
 
+		//ADD: Audio_UsbHeadsetDirection
+#if IS_ENABLED(CONFIG_QCOM_FSA4480_I2C)
+		rc = fsa4480_flip_event(&wcd_fsa4480_usbhs_state);
+		if (wcd_fsa4480_usbhs_state != 0) {
+			mbhc->mbhc_cfg->usbhs_status_value = wcd_fsa4480_usbhs_state;
+		}
+#endif
+		//END Audio_UsbHeadsetDirection
 		pr_debug("%s: Reporting insertion %d(%x)\n", __func__,
 			 jack_type, mbhc->hph_status);
+		//ADD: touch headphone status
+#if LCT_TP_EARPHONE_PLUGIN
+		g_touchscreen_earphone_pulgin.earphone_plugged_in = true;
+		if(g_touchscreen_earphone_pulgin.valid) {
+			g_touchscreen_earphone_pulgin.event_callback();
+		}
+
+#endif
+		//END: touch headphone status
 		wcd_mbhc_jack_report(mbhc, &mbhc->headset_jack,
 				    (mbhc->hph_status | SND_JACK_MECHANICAL),
 				    WCD_MBHC_JACK_MASK);
@@ -1036,6 +1086,13 @@ static void wcd_mbhc_swch_irq_handler(struct wcd_mbhc *mbhc)
 			mbhc->mbhc_fn->wcd_mbhc_detect_plug_type(mbhc);
 	} else if ((mbhc->current_plug != MBHC_PLUG_TYPE_NONE)
 			&& !detection_type) {
+		//ADD: Audio_Improve_HSDET
+		if (mbhc->mbhc_cb->mbhc_micbias_control){
+			mbhc->mbhc_cb->mbhc_micbias_control(
+					component, MIC_BIAS_2,
+					MICB_DISABLE);
+		}
+		//END Audio_Improve_HSDET
 		/* Disable external voltage source to micbias if present */
 		if (mbhc->mbhc_cb->enable_mb_source)
 			mbhc->mbhc_cb->enable_mb_source(mbhc, false);
@@ -1493,15 +1550,19 @@ static int wcd_mbhc_initialise(struct wcd_mbhc *mbhc)
 		WCD_MBHC_REG_UPDATE_BITS(WCD_MBHC_L_DET_EN, 1);
 
 	if (mbhc->mbhc_cfg->enable_usbc_analog) {
-		/* Insertion debounce set to 48ms */
-		WCD_MBHC_REG_UPDATE_BITS(WCD_MBHC_INSREM_DBNC, 4);
+		//ADD: Audio_Improve_HSDET
+		/* Insertion debounce set to 192ms */
+		WCD_MBHC_REG_UPDATE_BITS(WCD_MBHC_INSREM_DBNC, 8);
+		//END Audio_Improve_HSDET
 	} else {
 		/* Insertion debounce set to 96ms */
 		WCD_MBHC_REG_UPDATE_BITS(WCD_MBHC_INSREM_DBNC, 6);
 	}
 
-	/* Button Debounce set to 16ms */
-	WCD_MBHC_REG_UPDATE_BITS(WCD_MBHC_BTN_DBNC, 2);
+	//ADD: Audio_Improve_HSDET
+	/* Button Debounce set to 32ms */
+	WCD_MBHC_REG_UPDATE_BITS(WCD_MBHC_BTN_DBNC, 3);
+	//END Audio_Improve_HSDET
 
 	/* enable bias */
 	mbhc->mbhc_cb->mbhc_bias(component, true);
@@ -1666,6 +1727,7 @@ static int wcd_mbhc_set_keycode(struct wcd_mbhc *mbhc)
 static int wcd_mbhc_usbc_ana_event_handler(struct notifier_block *nb,
 					   unsigned long mode, void *ptr)
 {
+	u8 det_status = 0; /*ADD: Audio_Improve_HSDET*/
 	struct wcd_mbhc *mbhc = container_of(nb, struct wcd_mbhc, fsa_nb);
 
 	if (!mbhc)
@@ -1674,10 +1736,33 @@ static int wcd_mbhc_usbc_ana_event_handler(struct notifier_block *nb,
 	dev_dbg(mbhc->component->dev, "%s: mode = %lu\n", __func__, mode);
 
 	if (mode == TYPEC_ACCESSORY_AUDIO) {
-		if (mbhc->mbhc_cb->clk_setup)
+		//ADD: Audio_Improve_HSDET
+		if (mbhc->mbhc_cb->clk_setup) {
+			mbhc->mbhc_cb->clk_setup(mbhc->component, false);
 			mbhc->mbhc_cb->clk_setup(mbhc->component, true);
+		}
 		/* insertion detected, enable L_DET_EN */
+		WCD_MBHC_REG_UPDATE_BITS(WCD_MBHC_L_DET_EN, 0);
 		WCD_MBHC_REG_UPDATE_BITS(WCD_MBHC_L_DET_EN, 1);
+		WCD_MBHC_REG_READ(WCD_MBHC_L_DET_EN,det_status);
+		pr_debug("%s: det_status = %x\n",__func__,det_status);
+		//END Audio_Improve_HSDET
+	} else {
+		//ADD: Audio_Improve_HSDET
+		if (mode == TYPEC_ACCESSORY_NONE && mbhc->current_plug == MBHC_PLUG_TYPE_NONE) {
+			mbhc->hs_detect_work_stop = true;
+			/* Disable HW FSM */
+			WCD_MBHC_REG_UPDATE_BITS(WCD_MBHC_FSM_EN, 0);
+			WCD_MBHC_REG_UPDATE_BITS(WCD_MBHC_BTN_ISRC_CTL, 0);
+			mbhc->extn_cable_hph_rem = false;
+			WCD_MBHC_REG_UPDATE_BITS(WCD_MBHC_L_DET_EN, 0);
+			if (mbhc->mbhc_cb->clk_setup)
+				mbhc->mbhc_cb->clk_setup(mbhc->component, false);
+			WCD_MBHC_REG_UPDATE_BITS(WCD_MBHC_MECH_DETECTION_TYPE, 1);
+			WCD_MBHC_REG_READ(WCD_MBHC_L_DET_EN,det_status);
+			pr_debug("%s: det_status = %x\n",__func__,det_status);
+		}
+		//END Audio_Improve_HSDET
 	}
 	return 0;
 }
@@ -1686,6 +1771,29 @@ static int wcd_mbhc_usbc_ana_event_handler(struct notifier_block *nb,
 					   unsigned long mode, void *ptr)
 {
 	return 0;
+}
+#endif
+
+#if IS_ENABLED(CONFIG_LCT_AUDIO_INFO)
+#define AUDIO_INFO_MAX_LEN     (64)
+extern int lct_audio_info_set_audio_switch_name(const char *audio_switch_name, int count);
+
+#if IS_ENABLED(CONFIG_QCOM_FSA4480_I2C)
+extern int fsa4480_get_name(char *audio_switch_name);
+#endif
+
+static int wcd_mbhc_set_audio_switch_name(struct wcd_mbhc *mbhc)
+{
+	int rc = 0;
+	char wcd_audio_switch_name[AUDIO_INFO_MAX_LEN] = {0};
+#if IS_ENABLED(CONFIG_QCOM_FSA4480_I2C)
+	rc = fsa4480_get_name(wcd_audio_switch_name);
+#else
+	strncpy(wcd_audio_switch_name, "unknown_audio_switch", strlen("unknown_audio_switch"));
+#endif
+	lct_audio_info_set_audio_switch_name(wcd_audio_switch_name, strlen(wcd_audio_switch_name));
+	dev_dbg(mbhc->component->dev, " %s:audio switch name: %s\n", __func__, wcd_audio_switch_name);
+	return rc;
 }
 #endif
 
@@ -1762,6 +1870,14 @@ int wcd_mbhc_start(struct wcd_mbhc *mbhc, struct wcd_mbhc_config *mbhc_cfg)
 		mbhc->fsa_nb.notifier_call = wcd_mbhc_usbc_ana_event_handler;
 		mbhc->fsa_nb.priority = 0;
 		rc = fsa4480_reg_notifier(&mbhc->fsa_nb, mbhc->fsa_np);
+		if (rc) {
+			dev_err(card->dev, "%s: rc %d, ignore fsa4480_reg_notifier failed\n",
+					__func__, rc);
+			rc = 0;
+		}
+#if IS_ENABLED(CONFIG_LCT_AUDIO_INFO)
+		wcd_mbhc_set_audio_switch_name(mbhc);
+#endif
 	}
 
 	return rc;
